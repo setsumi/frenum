@@ -1,0 +1,20 @@
+# Build dirs
+/Debug
+/Release
+/__history
+
+# Intermediate Build files
+*.gch
+*.map
+*.obj
+*.pch
+*.tds
+
+*.~*
+*.#*
+*.local
+
+# Output files
+#/**/*.dll
+#/**/*.lib
+#/**/*.exe
