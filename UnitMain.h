@@ -18,15 +18,19 @@ typedef struct NamePair
 	String newPath;
 	String newFile;
 	bool deedDone;
+	bool isDir;
 
-	NamePair(): deedDone(true) {	}
-	void Clear() {
+	NamePair(): deedDone(true), isDir(false) {	}
+	void Clear(bool isdir = false)
+	{
 		oldPath = L"";
 		newPath = L"";
 		newFile = L"";
 		deedDone = true;
+		isDir = isdir;
 	}
-	bool Same() {
+	bool Same()
+	{
 		return (oldPath.CompareIC(newPath) == 0);
 	}
 } NamePair;
@@ -44,8 +48,9 @@ private:	// User declarations
 	void EnumFiles(const String& strFilePath, const bool& bRecursive, const int iMax);
 	void showMsg(UnicodeString msg, void *data = NULL);
 	String strPadNum(const String &str, const String &path, const String &ext,
-		const int max, NamePair *item);
+		const int max, NamePair *item, bool silent = false);
   void JumpToFile();
+	String ParamsDescription();
 public:		// User declarations
 	__fastcall TFormFRenum(TComponent* Owner);
 };

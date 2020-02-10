@@ -71,8 +71,9 @@ void TFormFRenum::showMsg(UnicodeString msg, void *data)
 __fastcall TFormFRenum::TFormFRenum(TComponent* Owner)
 	: TForm(Owner)
 {
-//	CoInitializeEx(NULL, COINIT_MULTITHREADED);
+	CoInitializeEx(NULL, 0);
 
+	// no parameters - display help
 	if (ParamCount() < 1)
 	{
 		ShowMessage((String)L"Pad/trim numbers in file/folder names with leading zeroes\n\n"
@@ -82,18 +83,37 @@ __fastcall TFormFRenum::TFormFRenum(TComponent* Owner)
 								"-d   process folder names too");
 		exit(0);
 	}
+
+	// 1st parameter - path to work with
 	Dir = ParamStr(1);
+	if (DirectoryExists(Dir))
+	{
+		Caption = Caption + L" - " + ExpandFileName(Dir);
+	}	else
+	{
+		ShowMessage(L"Invalid path:\n" + Dir);
+		exit(0);
+	}
+
+	// rest of parameters
 	String p;
 	for (int i = 2; i <= ParamCount(); i++)
 	{
 		p = ParamStr(i);
-		if (p.CompareIC(L"-r") == 0)
-		{
-			Recursive = true;
-		}
-		else if (p.CompareIC(L"-d") == 0)
-		{
-			AlsoFolders = true;
+		if (p[1] == L'-') {
+			if (p.CompareIC(L"-r") == 0)
+			{
+				Recursive = true;
+			}
+			else if (p.CompareIC(L"-d") == 0)
+			{
+				AlsoFolders = true;
+			}
+			else
+			{
+				ShowMessage((String)L"Invalid parameter: " + p);
+				exit(0);
+			}
 		}
 		else
 		{
@@ -108,7 +128,12 @@ __fastcall TFormFRenum::TFormFRenum(TComponent* Owner)
 			} catch (EConvertError &e) { }
 		}
 	}
-	return;
+
+	if (MessageBox(NULL, ((String)L"Process folder?\n" + ExpandFileName(Dir) + L"\n\n" +
+		ParamsDescription()).c_str(), L"frenum", MB_YESNOCANCEL|MB_ICONWARNING|MB_DEFBUTTON2) != IDYES)
+	{
+  	exit(0);
+	}
 }
 
 //---------------------------------------------------------------------------
@@ -142,7 +167,7 @@ void TFormFRenum::EnumFiles(const String& strFilePath, const bool& bRecursive, c
 					// Folders
 					NumDirs++;
 
-					pair.Clear();
+					pair.Clear(true);
 					FolderList.push_back(pair);
 					pPair = &(*(--FolderList.end()));
 
@@ -193,7 +218,7 @@ void TFormFRenum::EnumFiles(const String& strFilePath, const bool& bRecursive, c
 
 //---------------------------------------------------------------------------
 String TFormFRenum::strPadNum(const String &str, const String &path, const String &ext,
-	const int max, NamePair *item)
+	const int max, NamePair *item, bool silent)
 {
 	String tmp;
 	int shift = 0;
@@ -209,9 +234,12 @@ String TFormFRenum::strPadNum(const String &str, const String &path, const Strin
 		if (iter->length() > MAX_DIGITS_LIMIT)
 		{
 			tmp = (*iter).str().c_str();
-			warnLimit = true;
-			NumWarnings++;
-			showMsg((String)L"➦ WARNING: ignoring huge number exceeding " + MAX_DIGITS_LIMIT + L" digits");
+			if (!silent)
+			{
+				warnLimit = true;
+				NumWarnings++;
+				showMsg((String)L"➦ WARNING: ignoring huge number exceeding " + MAX_DIGITS_LIMIT + L" digits");
+			}
 		} else
 		{
 			tmp.sprintf((String(L"%0") + max + L"I64d").c_str(), StrToLongLong((*iter).str().c_str()));
@@ -219,7 +247,7 @@ String TFormFRenum::strPadNum(const String &str, const String &path, const Strin
 		strResult.replace(iter->first - strIn.begin() + shift, iter->length(), tmp.c_str());
 		shift += tmp.Length() - iter->length();
 
-		if (!warnLimit && tmp.Length() > max)
+		if (!silent && !warnLimit && tmp.Length() > max)
 		{
 			warn = true;
 			NumWarnings++;
@@ -228,7 +256,7 @@ String TFormFRenum::strPadNum(const String &str, const String &path, const Strin
 	}
 
 	if (warn || warnLimit)
-		showMsg(path + strResult.c_str() + ext, item);
+		showMsg(path + strResult.c_str() + ext + (item->isDir?L" <DIR>":L""), item);
 
 	return strResult.c_str();
 }
@@ -240,6 +268,12 @@ void __fastcall TFormFRenum::FormCreate(TObject *Sender)
 	ListView1->Columns[0][0]->Caption =
 		L"Enter/Double click - jump to file/folder in Windows Explorer;  Esc - exit";
 
+	String tmp;
+	showMsg(String(L"Path: ") + ExpandFileName(Dir));
+	showMsg(ParamsDescription());
+	showMsg(L"Starting");
+
+	// gather files and generate new names
 	EnumFiles(Dir, Recursive, MaxDigits);
 
 	// process files
@@ -283,7 +317,6 @@ void __fastcall TFormFRenum::FormCreate(TObject *Sender)
 		}
 	}
 
-	String tmp;
 	showMsg(L"Done");
 	tmp.sprintf(L"Files: %d, Renamed: %d; Folders: %d, Renamed: %d; Warnings: %d, Errors: %d",
 			NumFiles, NumFilesRenamed, NumDirs, NumDirsRenamed, NumWarnings, NumErrors);
@@ -315,9 +348,35 @@ void __fastcall TFormFRenum::ListView1DblClick(TObject *Sender)
 void TFormFRenum::JumpToFile()
 {
 	NamePair *pp = (ListView1->Selected)? (NamePair*)ListView1->Selected->Data : NULL;
-	if (pp) {
-		String path = pp->deedDone? pp->newPath : pp->oldPath;
-		BrowseToFile(ExpandFileName(path).c_str());
+	if (pp)
+	{
+		String path = ExpandFileName(pp->deedDone? pp->newPath : pp->oldPath);
+		std::auto_ptr<TStringList> tries(new TStringList());
+		tries->Add(path);
+
+		bool exists = (FileExists(path) || DirectoryExists(path));
+		if (!exists)
+		{
+			if (pp->isDir)
+			{
+				path = strPadNum(path, L"", L"", MaxDigits, NULL, true);
+			} else
+			{
+				String ext = ExtractFileExt(path);
+				String name = path.SubString(1, path.Length() - ext.Length());
+				path = strPadNum(name, L"", L"", MaxDigits, NULL, true) + ext;
+			}
+			tries->Add(path);
+			exists = (FileExists(path) || DirectoryExists(path));
+		}
+		if (exists)
+		{
+			BrowseToFile(ExpandFileName(path).c_str());
+		} else
+		{
+			ShowMessage((String)L"Unable to find " + (pp->isDir?L"folder":L"file") +
+				L" from candidates:\n" + tries->Text + L"\nCheck folder errors.");
+		}
 	}
 }
 
@@ -325,6 +384,15 @@ void TFormFRenum::JumpToFile()
 void __fastcall TFormFRenum::FormShow(TObject *Sender)
 {
 	SNDMSG(ListView1->Handle, WM_VSCROLL, SB_BOTTOM, 0);
+}
+
+//---------------------------------------------------------------------------
+String TFormFRenum::ParamsDescription()
+{
+	String ret;
+	ret.sprintf(L"Digits: %d, Subfolders: %s, Rename Folders: %s", MaxDigits,
+		Recursive? L"YES":L"NO", AlsoFolders? L"YES":L"NO");
+	return ret;
 }
 
 //---------------------------------------------------------------------------
